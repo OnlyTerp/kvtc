@@ -245,6 +245,8 @@ def main():
     parser.add_argument("--bit-budget-ratio", type=float, default=0.25, help="Bit budget as fraction of FP16")
     parser.add_argument("--sink-tokens", type=int, default=4, help="Number of attention sink tokens to preserve")
     parser.add_argument("--window-tokens", type=int, default=32, help="Sliding window size to preserve")
+    parser.add_argument("--load-in-8bit", action="store_true", help="Load model in 8-bit quantization (bitsandbytes)")
+    parser.add_argument("--load-in-4bit", action="store_true", help="Load model in 4-bit quantization (bitsandbytes)")
     args = parser.parse_args()
     
     print(f"KVTC Benchmark")
@@ -263,11 +265,18 @@ def main():
     from transformers import AutoModelForCausalLM, AutoTokenizer
     
     tokenizer = AutoTokenizer.from_pretrained(args.model, trust_remote_code=True)
-    model = AutoModelForCausalLM.from_pretrained(
-        args.model,
-        torch_dtype=torch.float16 if args.device == "cuda" else torch.float32,
-        trust_remote_code=True,
-    )
+    load_kwargs = {
+        "trust_remote_code": True,
+    }
+    if args.load_in_8bit:
+        load_kwargs["load_in_8bit"] = True
+        load_kwargs["device_map"] = "auto"
+    elif args.load_in_4bit:
+        load_kwargs["load_in_4bit"] = True
+        load_kwargs["device_map"] = "auto"
+    else:
+        load_kwargs["torch_dtype"] = torch.float16 if args.device == "cuda" else torch.float32
+    model = AutoModelForCausalLM.from_pretrained(args.model, **load_kwargs)
     if args.device == "cuda":
         model = model.cuda()
     model.eval()
