@@ -132,51 +132,18 @@ def gpu_pack_variable_width(
         if width == 0:
             continue
         
-        mask_val = np.uint64((1 << width) - 1)
-        col = idx_np[:, comp_idx] & mask_val
+        mask_val = (1 << width) - 1
+        col = idx_np[:, comp_idx]
         
-        # Pack this column — values per 64-bit word
-        vals_per_word = 64 // width if width > 0 else 0
-        
-        if vals_per_word >= 2 and bits_in_acc == 0:
-            # Fast path: pack full 64-bit words at once using numpy
-            n = col.shape[0]
-            full_chunks = n // vals_per_word
-            remainder = n % vals_per_word
-            
-            if full_chunks > 0:
-                chunk_data = col[:full_chunks * vals_per_word].reshape(full_chunks, vals_per_word)
-                shifts = np.arange(vals_per_word, dtype=np.uint64) * np.uint64(width)
-                # Shift and OR-reduce each chunk into a 64-bit word
-                words = np.bitwise_or.reduce(chunk_data << shifts[np.newaxis, :], axis=1)
-                
-                # Extract bytes from each word
-                bytes_per_word = (vals_per_word * width + 7) // 8
-                for word in words:
-                    w = int(word)
-                    for b in range(bytes_per_word):
-                        output[out_idx] = (w >> (b * 8)) & 0xFF
-                        out_idx += 1
-            
-            # Handle remainder with scalar
-            for val in col[full_chunks * vals_per_word:]:
-                accumulator |= int(val) << bits_in_acc
-                bits_in_acc += width
-                while bits_in_acc >= 8:
-                    output[out_idx] = accumulator & 0xFF
-                    accumulator >>= 8
-                    bits_in_acc -= 8
-                    out_idx += 1
-        else:
-            # Scalar path (accumulator has leftover bits from previous component)
-            for val in col:
-                accumulator |= int(val) << bits_in_acc
-                bits_in_acc += width
-                while bits_in_acc >= 8:
-                    output[out_idx] = accumulator & 0xFF
-                    accumulator >>= 8
-                    bits_in_acc -= 8
-                    out_idx += 1
+        # Scalar with numpy array (avoids Python int() conversion overhead)
+        for val in col:
+            accumulator |= (int(val) & mask_val) << bits_in_acc
+            bits_in_acc += width
+            while bits_in_acc >= 8:
+                output[out_idx] = accumulator & 0xFF
+                accumulator >>= 8
+                bits_in_acc -= 8
+                out_idx += 1
     
     if bits_in_acc:
         output[out_idx] = accumulator & 0xFF
