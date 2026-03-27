@@ -166,8 +166,14 @@ def fast_pack_bits(
 ) -> bytes:
     """Pack variable-width quantized indices into bytes.
     
-    Optimized: converts columns to numpy for faster iteration.
+    Uses GPU-accelerated packing if available, falls back to numpy/python.
     """
+    try:
+        from .triton_kernels import gpu_pack_variable_width, HAS_TRITON
+        if HAS_TRITON or True:  # gpu_pack uses torch ops, doesn't need triton
+            return gpu_pack_variable_width(indices, bit_widths)
+    except ImportError:
+        pass
     try:
         import numpy as np
         return _pack_bits_numpy(indices, bit_widths)
@@ -243,7 +249,14 @@ def fast_unpack_dequantize(
     scales: torch.Tensor,
     zero_points: torch.Tensor,
 ) -> torch.Tensor:
-    """Unpack and dequantize in one pass — avoids intermediate list of tensors."""
+    """Unpack and dequantize — uses GPU-accelerated version with vectorized dequant per column."""
+    try:
+        from .triton_kernels import gpu_unpack_dequantize
+        return gpu_unpack_dequantize(packed_bytes, bit_widths, num_rows, scales, zero_points)
+    except ImportError:
+        pass
+    
+    # Fallback: pure Python
     num_components = bit_widths.numel()
     bw_list = bit_widths.tolist()
     
@@ -252,7 +265,6 @@ def fast_unpack_dequantize(
     accumulator = 0
     bits_in_acc = 0
     
-    # Pre-allocate output
     result = torch.zeros(num_rows, num_components, dtype=torch.float32)
     
     for comp_idx in range(num_components):
@@ -273,7 +285,6 @@ def fast_unpack_dequantize(
             val = accumulator & mask
             accumulator >>= width
             bits_in_acc -= width
-            # Dequantize inline
             result[row, comp_idx] = (val - zp) * s
     
     return result
