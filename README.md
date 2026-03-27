@@ -27,20 +27,27 @@ KV caches grow linearly with context length and can consume multiple gigabytes f
 | H2O | 4–8× | Task-dependent | Token eviction |
 | xKV | 8–16× | Strong | SVD-based compression |
 
-### Our Results — TinyLlama-1.1B on RTX 5090 (22 layers × 4 heads × dim=64)
+### Our Results — RTX 5090 (32GB), PyTorch 2.10, CUDA 12.8
 
-| Bit Budget | Bits/Value | Tokens | Middle Compression | Key Cosine | Value Cosine | Compress Time |
-|:----------:|:----------:|:------:|:------------------:|:----------:|:------------:|:-------------:|
-| 0.50 | 8.0 | 513 | **4.0×** | **0.969** | **0.971** | 10.6s |
-| 0.35 | 5.6 | 513 | **5.8×** | **0.954** | **0.960** | 8.4s |
-| 0.25 | 4.0 | 513 | **8.2×** | **0.899** | **0.900** | 6.3s |
-| 0.35 | 5.6 | 1025 | **5.9×** | **0.936** | **0.956** | 8.9s |
+#### Mistral-7B-Instruct-v0.3 (32 layers × 8 heads × dim=128, 513 tokens)
 
-Overall compression (including FP16 sinks + window): 1.9–3.4×. Middle-section compression: 4–8×.
+| Bit Budget | Avg Bits | Middle Compression | Key Cosine | Value Cosine | Key MSE |
+|:----------:|:--------:|:------------------:|:----------:|:------------:|:-------:|
+| 0.35 | 5.6 | **2.9×** | **0.9979** | **0.9991** | 0.0099 |
+
+**Near-perfect quality** at 2.9× compression on a production 7B model. Calibrated with 15 diverse paragraph-length texts.
+
+#### TinyLlama-1.1B (22 layers × 4 heads × dim=64, 513 tokens)
+
+| Bit Budget | Avg Bits | Middle Compression | Key Cosine | Value Cosine | Compress Time |
+|:----------:|:--------:|:------------------:|:----------:|:------------:|:-------------:|
+| 0.50 | 8.0 | **4.0×** | **0.969** | **0.971** | 835ms |
+| 0.35 | 5.6 | **5.8×** | **0.954** | **0.960** | 835ms |
+| 0.25 | 4.0 | **8.2×** | **0.899** | **0.900** | 835ms |
+
 Sinks (4 tokens) and sliding window (32 tokens) preserved exactly in FP16.
-Tested on **NVIDIA RTX 5090 (32GB)** with PyTorch 2.10 + CUDA 12.8.
 
-**GPU-accelerated pipeline** (`KVTCCompressorFast`): **835ms compress + 800ms decompress** for 512 tokens on RTX 5090 — **10× faster** than reference. Breakdown: PCA=32ms, DP=21ms, Quant=35ms, Pack=740ms.
+**GPU-accelerated pipeline** (`KVTCCompressorFast`): **835ms compress + 800ms decompress** for 512 tokens — **10× faster** than reference. Breakdown: PCA=32ms, DP=21ms, Quant=35ms, Pack=740ms.
 
 ## Architecture
 
