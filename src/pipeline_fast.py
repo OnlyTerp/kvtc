@@ -10,6 +10,7 @@ import torch
 from .common import CalibrationData, CompressedKVCache, CompressedSection, CompressionMetadata
 from .entropy import compress as entropy_compress
 from .entropy import decompress as entropy_decompress
+from .entropy import unpack_bits
 from .gpu_ops import (
     batch_dequantize,
     batch_quantize,
@@ -191,15 +192,17 @@ class KVTCCompressorFast:
         for section in compressed_cache.compressed_sections:
             entry = self.calibration_data.entries[(section.layer_idx, section.group_idx, section.kind)]
 
-            # Unpack + dequantize in one pass
             bw = torch.tensor(section.bit_widths, dtype=torch.int64)
             scales = torch.tensor(section.scales, dtype=torch.float32)
             zero_points = torch.tensor(section.zero_points, dtype=torch.float32)
 
+            # Unpack bits (original fast path)
             packed = entropy_decompress(section.compressed_bytes, section.packed_size)
-            dequantized = fast_unpack_dequantize(
-                packed, bw, section.num_rows, scales, zero_points,
-            )
+            unpacked = unpack_bits(packed, section.bit_widths, section.lengths)
+            
+            # Stack into [num_rows, components] and batch dequantize
+            indices = torch.stack(unpacked, dim=-1)
+            dequantized = batch_dequantize(indices, bw, scales, zero_points)
 
             # PCA inverse + RoPE reapply
             ev = entry.eigenvectors.to(dequantized.device)
