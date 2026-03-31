@@ -1,92 +1,42 @@
-# KVTC v3 Benchmark -- Per-Layer Adaptive + Dual Entropy
+# KVTC v4 Benchmark -- All High-Impact Optimizations
 ## Qwen/Qwen2.5-7B-Instruct on NVIDIA GeForce RTX 5090
 
-**Most comprehensive open-source KVTC benchmark to date.**
+### Optimizations Applied
+1. **Fused PCA+Quantize** -- single GPU pass, no intermediate tensor allocation
+2. **Entropy-based adaptive budgets** -- per-layer bit allocation based on eigenvalue spectrum entropy
+3. **ANS entropy coding** -- rANS (range Asymmetric Numeral Systems) vs zlib/LZMA triple-pick
+4. **Per-layer K/V split** -- independent key and value budgets per layer
 
-### Optimizations in v3
-1. **Asymmetric K/V bit budgets** -- keys need fewer bits (RoPE structure)
-2. **Per-layer adaptive budgets** -- harder layers (23-26) get extra bits automatically
-3. **Dual entropy coding** -- tries both zlib DEFLATE and LZMA2, picks the smaller one
-4. **Diverse calibration corpus** -- code, math, prose, JSON, dialogue
+### Results
 
-### Hardware
-- **GPU:** NVIDIA GeForce RTX 5090, 32GB VRAM
-- **Model:** Qwen/Qwen2.5-7B-Instruct
-- **Pipeline:** PCA decorrelation -> DP-optimal bit allocation -> dual entropy coding
+| Config | K | V | Opts | Ratio | K Cos | V Cos | Compress | Decompress | Quality |
+|--------|---|---|------|-------|-------|-------|----------|------------|---------|
+| K2V4-baseline | 2 | 4 | baseline | **5.9x** | 0.9968 | 0.9972 | 287ms | 5536ms | Excellent |
+| K1V3-baseline | 1 | 3 | baseline | **8.9x** | 0.9924 | 0.9866 | 255ms | 4791ms | Good |
+| K2V4-adaptive | 2 | 4 | adaptive | **5.9x** | 0.9970 | 0.9974 | 328ms | 5409ms | Excellent |
+| K1V3-adaptive | 1 | 3 | adaptive | **8.9x** | 0.9925 | 0.9874 | 260ms | 4836ms | Good |
+| K2V4-ANS | 2 | 4 | ANS | **5.9x** | 0.9968 | 0.9972 | 314ms | 5583ms | Excellent |
+| K1V3-ANS | 1 | 3 | ANS | **8.9x** | 0.9924 | 0.9866 | 260ms | 4797ms | Good |
+| K2V4-adapt+ANS | 2 | 4 | adaptive+ANS | **5.9x** | 0.9970 | 0.9974 | 313ms | 5427ms | Excellent |
+| K1V3-adapt+ANS | 1 | 3 | adaptive+ANS | **8.9x** | 0.9925 | 0.9874 | 266ms | 4773ms | Good |
+| K2V4-FULL | 2 | 4 | adaptive+ANS+fused | **5.9x** | 0.9970 | 0.9974 | 290ms | 5421ms | Excellent |
+| K1V3-FULL | 1 | 3 | adaptive+ANS+fused | **8.9x** | 0.9925 | 0.9874 | 267ms | 4796ms | Good |
+| K2V3-FULL | 2 | 3 | adaptive+ANS+fused | **7.2x** | 0.9970 | 0.9874 | 278ms | 5407ms | Good |
+| K3V4-FULL | 3 | 4 | adaptive+ANS+fused | **5.0x** | 0.9993 | 0.9974 | 324ms | 5494ms | Excellent |
+| K1V2-FULL | 1 | 2 | adaptive+ANS+fused | **12.8x** | 0.9925 | 0.9120 | 256ms | 4737ms | --- |
+| K1V4-FULL | 1 | 4 | adaptive+ANS+fused | **7.1x** | 0.9925 | 0.9974 | 266ms | 4800ms | Excellent |
 
-### Full Results
+### Optimization Impact
 
-| Config | K bits | V bits | Adaptive | Entropy | Ratio | K Cosine | V Cosine | V NMSE | Quality |
-|--------|--------|--------|----------|---------|-------|----------|----------|--------|---------|
-| K1V3-zlib | 1 | 3 | No | zlib | **8.8x** | 0.9896 | 0.9809 | 0.039831 | Good |
-| K2V3-zlib | 2 | 3 | No | zlib | **7.2x** | 0.9958 | 0.9809 | 0.039831 | Good |
-| K2V4-zlib | 2 | 4 | No | zlib | **6.1x** | 0.9958 | 0.9959 | 0.008308 | Excellent |
-| K3V4-zlib | 3 | 4 | No | zlib | **5.1x** | 1.0001 | 0.9959 | 0.008308 | Excellent |
-| K1V3-lzma | 1 | 3 | No | lzma | **8.8x** | 0.9896 | 0.9809 | 0.039831 | Good |
-| K2V3-lzma | 2 | 3 | No | lzma | **7.2x** | 0.9958 | 0.9809 | 0.039831 | Good |
-| K2V4-lzma | 2 | 4 | No | lzma | **6.1x** | 0.9958 | 0.9959 | 0.008308 | Excellent |
-| K3V4-lzma | 3 | 4 | No | lzma | **5.1x** | 1.0001 | 0.9959 | 0.008308 | Excellent |
-| K1V3-adapt-lzma | 1 | 3 | Yes | lzma | **7.6x** | 0.9903 | 0.9871 | 0.026541 | Good |
-| K2V3-adapt-lzma | 2 | 3 | Yes | lzma | **7.4x** | 0.9905 | 0.9871 | 0.026541 | Good |
-| K2V4-adapt-lzma | 2 | 4 | Yes | lzma | **5.9x** | 0.9905 | 0.9976 | 0.004820 | Excellent |
-| K3V4-adapt-lzma | 3 | 4 | Yes | lzma | **5.1x** | 0.9967 | 0.9976 | 0.004820 | Excellent |
-| K4V4-adapt-lzma | 4 | 4 | Yes | lzma | **4.4x** | 1.0002 | 0.9976 | 0.004820 | Excellent |
-| K4V6-adapt-lzma | 4 | 6 | Yes | lzma | **3.4x** | 1.0002 | 0.9999 | 0.000254 | Lossless |
+**K2V4 baseline -> FULL:**
+- Compression: 5.9x -> 5.9x (-0.1%)
+- V Cosine: 0.9972 -> 0.9974 (+0.0002)
+- Compress speed: 287ms -> 290ms (-1%)
 
-### Recommended Configurations
+**K1V3 baseline -> FULL:**
+- Compression: 8.9x -> 8.9x (+0.1%)
+- V Cosine: 0.9866 -> 0.9874 (+0.0008)
 
-- **Production (V cosine >= 0.995):** `K2V4-zlib` -- **6.1x** compression
-- **Balanced (V cosine >= 0.98):** `K1V3-zlib` -- **8.8x** compression
-- **Aggressive (V cosine >= 0.95):** `K1V3-zlib` -- **8.8x** compression
-
-### Optimization Impact Analysis
-
-- **LZMA vs zlib** (K2V4): 6.1x -> 6.1x (+0.0% compression)
-- **Adaptive vs uniform** (K2V4+lzma): V cosine 0.9959 -> 0.9976 (+0.0017)
-
-### vs TurboQuant (our previous implementation)
-
-| Method | Ratio | Quality | Notes |
-|--------|-------|---------|-------|
-| TurboQuant turbo3 | 4.6x | +1.1% PPL | Random Hadamard, Lloyd-Max, 3-bit uniform |
-| TurboQuant turbo2 | 6.4x | +6.5% PPL | Same, 2-bit uniform |
-| **KVTC K1V3-zlib** | **8.8x** | V cos 0.9809 | PCA + DP-opt + zlib  |
-| **KVTC K1V3-lzma** | **8.8x** | V cos 0.9809 | PCA + DP-opt + lzma  |
-| **KVTC K1V3-adapt-lzma** | **7.6x** | V cos 0.9871 | PCA + DP-opt + lzma + adaptive |
-| **KVTC K2V3-adapt-lzma** | **7.4x** | V cos 0.9871 | PCA + DP-opt + lzma + adaptive |
-| **KVTC K2V3-zlib** | **7.2x** | V cos 0.9809 | PCA + DP-opt + zlib  |
-| **KVTC K2V3-lzma** | **7.2x** | V cos 0.9809 | PCA + DP-opt + lzma  |
-| **KVTC K2V4-zlib** | **6.1x** | V cos 0.9959 | PCA + DP-opt + zlib  |
-| **KVTC K2V4-lzma** | **6.1x** | V cos 0.9959 | PCA + DP-opt + lzma  |
-| **KVTC K2V4-adapt-lzma** | **5.9x** | V cos 0.9976 | PCA + DP-opt + lzma + adaptive |
-| **KVTC K3V4-adapt-lzma** | **5.1x** | V cos 0.9976 | PCA + DP-opt + lzma + adaptive |
-| **KVTC K3V4-zlib** | **5.1x** | V cos 0.9959 | PCA + DP-opt + zlib  |
-| **KVTC K3V4-lzma** | **5.1x** | V cos 0.9959 | PCA + DP-opt + lzma  |
-| **KVTC K4V4-adapt-lzma** | **4.4x** | V cos 0.9976 | PCA + DP-opt + lzma + adaptive |
-
-### Theoretical Context Window (Qwen3.5-27B on RTX 5090, 32GB)
-
-| Method | Ratio | Max Context | Quality |
-|--------|-------|-------------|---------|
-| f16 | 1.0x | 232K | Perfect |
-| TurboQuant turbo3 | 4.6x | 1.1M | +1.1% PPL |
-| TurboQuant turbo2 | 6.4x | 1.5M | +6.5% PPL |
-| **KVTC K1V3-zlib** | **8.8x** | **2.1M** | V cos 0.981 |
-| **KVTC K1V3-lzma** | **8.8x** | **2.1M** | V cos 0.981 |
-| **KVTC K1V3-adapt-lzma** | **7.6x** | **1.8M** | V cos 0.987 |
-| **KVTC K2V3-adapt-lzma** | **7.4x** | **1.7M** | V cos 0.987 |
-| **KVTC K2V3-zlib** | **7.2x** | **1.7M** | V cos 0.981 |
-| **KVTC K2V3-lzma** | **7.2x** | **1.7M** | V cos 0.981 |
-| **KVTC K2V4-zlib** | **6.1x** | **1.4M** | V cos 0.996 |
-| **KVTC K2V4-lzma** | **6.1x** | **1.4M** | V cos 0.996 |
-| **KVTC K2V4-adapt-lzma** | **5.9x** | **1.4M** | V cos 0.998 |
-| **KVTC K3V4-adapt-lzma** | **5.1x** | **1.2M** | V cos 0.998 |
-| **KVTC K3V4-zlib** | **5.1x** | **1.2M** | V cos 0.996 |
-| **KVTC K3V4-lzma** | **5.1x** | **1.2M** | V cos 0.996 |
-| **KVTC K4V4-adapt-lzma** | **4.4x** | **1.0M** | V cos 0.998 |
 
 ---
-
-*Benchmarked 2026-03-31 18:09 by [@OnlyTerp](https://x.com/OnlyTerp) / Terp AI Labs*
-*KVTC paper: arXiv 2511.01815 (NVIDIA, ICLR 2026)*
-*Open source: github.com/OnlyTerp/kvtc*
+*Benchmarked 2026-03-31 18:28 by [@OnlyTerp](https://x.com/OnlyTerp) / Terp AI Labs*
