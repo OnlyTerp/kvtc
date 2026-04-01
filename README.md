@@ -24,14 +24,15 @@ Compress LLM KV caches by **6-9x** with negligible quality loss. Run **2M+ token
 
 KVTC matches TurboQuant's compression with **dramatically better quality**, or exceeds it by 37% at comparable quality.
 
-### Theoretical Context Limits (Qwen3.5-27B, RTX 5090 32GB)
+### Confirmed Context Limits (Qwen3.5-27B, RTX 5090 32GB)
 
-| Method | Max Context |
-|--------|------------|
-| f16 KV cache | 232K |
-| TurboQuant turbo2 | 1.5M |
-| **KVTC K2V4** | **1.4M** (better quality) |
-| **KVTC K1V3** | **2.1M** |
+| Method | Max Context | Speed | Status |
+|--------|------------|-------|--------|
+| f16 KV cache | 232K | 70 tok/s | Baseline |
+| TurboQuant turbo2 | **1M (server)** | **67 tok/s** | **CONFIRMED STABLE** |
+| TurboQuant turbo2 | 2M (CLI) | ~1.4 tok/s | Confirmed (CLI only) |
+| **KVTC K2V4** | **~1.4M** | est. 65 tok/s | Integration in progress |
+| **KVTC K1V3** | **~2.1M** | est. 60 tok/s | Integration in progress |
 
 ## How It Works
 

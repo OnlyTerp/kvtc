@@ -2,6 +2,26 @@
 
 **First known public TurboQuant CUDA benchmark on NVIDIA Blackwell (SM120) hardware.**
 
+## UPDATE (2026-03-31): Server Mode Confirmed
+
+TurboQuant turbo2 now running as a **persistent server** via llama-server:
+
+| Config | Context | Speed | VRAM | Status |
+|--------|---------|-------|------|--------|
+| turbo2, `-c 1000000` | **1,000,000 tokens** | **67.2 tok/s** | 17.3 GB | **STABLE** |
+| turbo2, `-c 262144` | 262K tokens | 67.7 tok/s | 15.9 GB | STABLE |
+| turbo2, `-c 32768` | 32K tokens | 68.6 tok/s | ~16 GB | STABLE |
+| turbo2, `-c 2000000` (CLI) | **2,000,000 tokens** | ~1.4 tok/s | ~30 GB | Works (CLI only) |
+
+**QwOpus (Qwen3.5-27B-Q4_K_M, Opus-distilled) serving 1M context at 67 tok/s on a single RTX 5090.**
+
+Server command:
+```
+llama-server.exe -m Qwen3.5-27B-Q4_K_M.gguf -ctk turbo2 -ctv turbo2 -fa on -ngl 99 -c 1000000 --host 0.0.0.0 --port 8081 -np 1
+```
+
+---
+
 ## Hardware
 - **GPU:** NVIDIA GeForce RTX 5090, 32GB VRAM, Compute Capability 12.0
 - **Driver:** 591.86, CUDA 12.8 (build), CUDA 13.1 (driver)
