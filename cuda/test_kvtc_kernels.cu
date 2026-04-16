@@ -17,10 +17,27 @@
 #include <stdlib.h>
 #include <math.h>
 #include <time.h>
+#include <string.h>
 
 #define DIM 128
 #define NUM_ROWS 64
 #define EPSILON 1e-3f
+
+/* ─── CUDA error checking ────────────────────────────────────────── */
+
+#define CUDA_CHECK(call) do { \
+    cudaError_t err = (call); \
+    if (err != cudaSuccess) { \
+        fprintf(stderr, "  CUDA error at %s:%d: %s\n", \
+                __FILE__, __LINE__, cudaGetErrorString(err)); \
+        return 0; /* test fails */ \
+    } \
+} while(0)
+
+#define CUDA_CHECK_SYNC() do { \
+    CUDA_CHECK(cudaGetLastError()); \
+    CUDA_CHECK(cudaDeviceSynchronize()); \
+} while(0)
 
 /* ─── Helpers ────────────────────────────────────────────────────── */
 
@@ -68,22 +85,22 @@ int test_pca_roundtrip() {
     
     /* GPU buffers */
     float *d_data, *d_eigvec, *d_mean, *d_pca, *d_restored;
-    cudaMalloc(&d_data, size * sizeof(float));
-    cudaMalloc(&d_eigvec, DIM * DIM * sizeof(float));
-    cudaMalloc(&d_mean, DIM * sizeof(float));
-    cudaMalloc(&d_pca, size * sizeof(float));
-    cudaMalloc(&d_restored, size * sizeof(float));
+    CUDA_CHECK(cudaMalloc(&d_data, size * sizeof(float)));
+    CUDA_CHECK(cudaMalloc(&d_eigvec, DIM * DIM * sizeof(float)));
+    CUDA_CHECK(cudaMalloc(&d_mean, DIM * sizeof(float)));
+    CUDA_CHECK(cudaMalloc(&d_pca, size * sizeof(float)));
+    CUDA_CHECK(cudaMalloc(&d_restored, size * sizeof(float)));
     
-    cudaMemcpy(d_data, h_data, size * sizeof(float), cudaMemcpyHostToDevice);
-    cudaMemcpy(d_eigvec, h_eigvec, DIM * DIM * sizeof(float), cudaMemcpyHostToDevice);
-    cudaMemcpy(d_mean, h_mean, DIM * sizeof(float), cudaMemcpyHostToDevice);
+    CUDA_CHECK(cudaMemcpy(d_data, h_data, size * sizeof(float), cudaMemcpyHostToDevice));
+    CUDA_CHECK(cudaMemcpy(d_eigvec, h_eigvec, DIM * DIM * sizeof(float), cudaMemcpyHostToDevice));
+    CUDA_CHECK(cudaMemcpy(d_mean, h_mean, DIM * sizeof(float), cudaMemcpyHostToDevice));
     
     /* Transform then inverse */
     kvtc_pca_transform(d_data, d_eigvec, d_mean, d_pca, NUM_ROWS, DIM, NULL);
     kvtc_pca_inverse(d_pca, d_eigvec, d_mean, d_restored, NUM_ROWS, DIM, NULL);
-    cudaDeviceSynchronize();
+    CUDA_CHECK_SYNC();
     
-    cudaMemcpy(h_result, d_restored, size * sizeof(float), cudaMemcpyDeviceToHost);
+    CUDA_CHECK(cudaMemcpy(h_result, d_restored, size * sizeof(float), cudaMemcpyDeviceToHost));
     
     float maxe = max_abs_error(h_data, h_result, size);
     float cos = cosine_similarity(h_data, h_result, size);
@@ -114,20 +131,20 @@ int test_rope_roundtrip() {
     
     float *d_data, *d_buf, *d_result;
     int *d_pos;
-    cudaMalloc(&d_data, size * sizeof(float));
-    cudaMalloc(&d_buf, size * sizeof(float));
-    cudaMalloc(&d_result, size * sizeof(float));
-    cudaMalloc(&d_pos, NUM_ROWS * sizeof(int));
+    CUDA_CHECK(cudaMalloc(&d_data, size * sizeof(float)));
+    CUDA_CHECK(cudaMalloc(&d_buf, size * sizeof(float)));
+    CUDA_CHECK(cudaMalloc(&d_result, size * sizeof(float)));
+    CUDA_CHECK(cudaMalloc(&d_pos, NUM_ROWS * sizeof(int)));
     
-    cudaMemcpy(d_data, h_data, size * sizeof(float), cudaMemcpyHostToDevice);
-    cudaMemcpy(d_pos, h_positions, NUM_ROWS * sizeof(int), cudaMemcpyHostToDevice);
+    CUDA_CHECK(cudaMemcpy(d_data, h_data, size * sizeof(float), cudaMemcpyHostToDevice));
+    CUDA_CHECK(cudaMemcpy(d_pos, h_positions, NUM_ROWS * sizeof(int), cudaMemcpyHostToDevice));
     
     /* Forward then inverse */
     kvtc_rope_forward(d_data, d_pos, d_buf, NUM_ROWS, DIM, 10000.0f, NULL);
     kvtc_rope_inverse(d_buf, d_pos, d_result, NUM_ROWS, DIM, 10000.0f, NULL);
-    cudaDeviceSynchronize();
+    CUDA_CHECK_SYNC();
     
-    cudaMemcpy(h_result, d_result, size * sizeof(float), cudaMemcpyDeviceToHost);
+    CUDA_CHECK(cudaMemcpy(h_result, d_result, size * sizeof(float), cudaMemcpyDeviceToHost));
     
     float maxe = max_abs_error(h_data, h_result, size);
     float cos = cosine_similarity(h_data, h_result, size);
@@ -160,21 +177,21 @@ int test_quantize_roundtrip() {
     float *d_scales, *d_zp;
     int32_t *d_indices;
     
-    cudaMalloc(&d_data, size * sizeof(float));
-    cudaMalloc(&d_dequant, size * sizeof(float));
-    cudaMalloc(&d_bw, DIM);
-    cudaMalloc(&d_scales, DIM * sizeof(float));
-    cudaMalloc(&d_zp, DIM * sizeof(float));
-    cudaMalloc(&d_indices, size * sizeof(int32_t));
+    CUDA_CHECK(cudaMalloc(&d_data, size * sizeof(float)));
+    CUDA_CHECK(cudaMalloc(&d_dequant, size * sizeof(float)));
+    CUDA_CHECK(cudaMalloc(&d_bw, DIM));
+    CUDA_CHECK(cudaMalloc(&d_scales, DIM * sizeof(float)));
+    CUDA_CHECK(cudaMalloc(&d_zp, DIM * sizeof(float)));
+    CUDA_CHECK(cudaMalloc(&d_indices, size * sizeof(int32_t)));
     
-    cudaMemcpy(d_data, h_data, size * sizeof(float), cudaMemcpyHostToDevice);
-    cudaMemcpy(d_bw, h_bw, DIM, cudaMemcpyHostToDevice);
+    CUDA_CHECK(cudaMemcpy(d_data, h_data, size * sizeof(float), cudaMemcpyHostToDevice));
+    CUDA_CHECK(cudaMemcpy(d_bw, h_bw, DIM, cudaMemcpyHostToDevice));
     
     kvtc_quantize(d_data, d_bw, d_scales, d_zp, d_indices, NUM_ROWS, DIM, NULL);
     kvtc_dequantize(d_indices, d_bw, d_scales, d_zp, d_dequant, NUM_ROWS, DIM, NULL);
-    cudaDeviceSynchronize();
+    CUDA_CHECK_SYNC();
     
-    cudaMemcpy(h_result, d_dequant, size * sizeof(float), cudaMemcpyDeviceToHost);
+    CUDA_CHECK(cudaMemcpy(h_result, d_dequant, size * sizeof(float), cudaMemcpyDeviceToHost));
     
     float maxe = max_abs_error(h_data, h_result, size);
     float cos = cosine_similarity(h_data, h_result, size);
@@ -205,15 +222,15 @@ int test_bit_allocation() {
     
     float *d_ev;
     int8_t *d_bw;
-    cudaMalloc(&d_ev, DIM * sizeof(float));
-    cudaMalloc(&d_bw, DIM);
-    cudaMemcpy(d_ev, h_ev, DIM * sizeof(float), cudaMemcpyHostToDevice);
+    CUDA_CHECK(cudaMalloc(&d_ev, DIM * sizeof(float)));
+    CUDA_CHECK(cudaMalloc(&d_bw, DIM));
+    CUDA_CHECK(cudaMemcpy(d_ev, h_ev, DIM * sizeof(float), cudaMemcpyHostToDevice));
     
     int budget = DIM * 4;  /* 4 bits average */
     kvtc_bit_allocation(d_ev, budget, d_bw, DIM, 16, NULL);
-    cudaDeviceSynchronize();
+    CUDA_CHECK_SYNC();
     
-    cudaMemcpy(h_bw, d_bw, DIM, cudaMemcpyDeviceToHost);
+    CUDA_CHECK(cudaMemcpy(h_bw, d_bw, DIM, cudaMemcpyDeviceToHost));
     
     /* Check: total bits should equal budget */
     int total = 0;
@@ -236,11 +253,23 @@ int main() {
     printf("\n  KVTC CUDA Kernel Tests\n");
     printf("  =====================\n\n");
     
+    /* Check for CUDA-capable GPU before running any tests */
+    int device_count = 0;
+    cudaError_t err = cudaGetDeviceCount(&device_count);
+    if (err != cudaSuccess || device_count == 0) {
+        printf("  No CUDA-capable GPU detected (cudaGetDeviceCount: %s)\n",
+               cudaGetErrorString(err));
+        printf("  Skipping GPU kernel tests — a CUDA GPU is required.\n\n");
+        return 0;
+    }
+    
     int device;
     cudaGetDevice(&device);
     struct cudaDeviceProp props;
     cudaGetDeviceProperties(&props, device);
-    printf("  GPU: %s (SM %d.%d)\n\n", props.name, props.major, props.minor);
+    printf("  GPU: %s (SM %d.%d, %d MB VRAM)\n\n",
+           props.name, props.major, props.minor,
+           (int)(props.totalGlobalMem / (1024 * 1024)));
     
     int passed = 0, total = 0;
     
