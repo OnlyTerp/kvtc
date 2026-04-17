@@ -2,8 +2,15 @@
 
 from __future__ import annotations
 
+from collections import defaultdict
+from dataclasses import dataclass, field
+from typing import Dict, List, Optional, Tuple
+
 import torch
 import math
+
+from .common import CalibrationData, CalibrationKey, PCAEntry
+from .quantize import dp_bit_allocation
 
 
 def pca_transform(centered: torch.Tensor, eigenvectors: torch.Tensor) -> torch.Tensor:
@@ -135,3 +142,138 @@ def apply_rope_inverse(
     sin = sin.to(x.dtype).to(x.device)
     # Inverse rotation: negate sin
     return _apply_rotary_emb(x, cos, -sin)
+
+
+# ---------------------------------------------------------------------------
+# PCACalibrator — collects KV samples and computes PCA calibration data
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class PCACalibrator:
+    """Collect KV cache samples and compute PCA calibration artifacts.
+
+    Usage:
+        calibrator = PCACalibrator(head_group_size=2)
+        for layer_idx in range(num_layers):
+            calibrator.collect(layer_idx, "keys", key_tensor, positions)
+            calibrator.collect(layer_idx, "values", value_tensor)
+        calibration = calibrator.compute(bit_budget_ratio=0.25)
+    """
+
+    head_group_size: int = 1
+    rope_theta: float = 10000.0
+
+    # Internal accumulators: {(layer, group, kind): [list of tensors]}
+    _samples: Dict[CalibrationKey, List[torch.Tensor]] = field(
+        default_factory=lambda: defaultdict(list), init=False, repr=False
+    )
+    _positions: Dict[int, List[torch.Tensor]] = field(
+        default_factory=lambda: defaultdict(list), init=False, repr=False
+    )
+
+    def collect(
+        self,
+        layer_idx: int,
+        kind: str,
+        tensor: torch.Tensor,
+        positions: Optional[torch.Tensor] = None,
+    ) -> None:
+        """Accumulate KV cache samples for one layer/kind.
+
+        Args:
+            layer_idx: Transformer layer index.
+            kind: ``"keys"`` or ``"values"``.
+            tensor: ``[seq_len, heads, dim]`` KV tensor (already detached, on CPU).
+            positions: ``[seq_len]`` position indices (required for keys).
+        """
+        if tensor.numel() == 0:
+            return
+
+        # tensor shape: [seq_len, heads, dim]
+        seq_len = tensor.shape[0]
+        if tensor.dim() == 2:
+            # [seq_len, dim] — single head
+            tensor = tensor.unsqueeze(1)
+        heads = tensor.shape[1]
+        dim = tensor.shape[2]
+
+        # Undo RoPE for keys so PCA sees the underlying low-rank structure
+        if kind == "keys" and positions is not None:
+            tensor = apply_rope_inverse(tensor, positions, rope_theta=self.rope_theta, head_dim=dim)
+
+        # Group heads
+        for group_start in range(0, heads, self.head_group_size):
+            group_end = min(group_start + self.head_group_size, heads)
+            group_idx = group_start // self.head_group_size
+            key: CalibrationKey = (layer_idx, group_idx, kind)
+            # Flatten group heads into rows: [seq_len * group_heads, dim]
+            group_data = tensor[:, group_start:group_end, :].reshape(-1, dim).float()
+            self._samples[key].append(group_data)
+
+        if positions is not None:
+            self._positions[layer_idx].append(positions)
+
+    def compute(self, bit_budget_ratio: float = 0.25) -> CalibrationData:
+        """Compute PCA bases and bit allocations from accumulated samples.
+
+        Args:
+            bit_budget_ratio: Fraction of original bits to allocate (0-1).
+                              E.g. 0.25 means 4 bits per 16-bit component on average.
+
+        Returns:
+            :class:`CalibrationData` ready for the compressor.
+        """
+        entries: Dict[CalibrationKey, PCAEntry] = {}
+
+        for key, sample_list in self._samples.items():
+            layer_idx, group_idx, kind = key
+
+            if not sample_list:
+                continue
+
+            # Concatenate all collected samples
+            data = torch.cat(sample_list, dim=0)  # [total_rows, dim]
+            dim = data.shape[1]
+
+            # Compute PCA via SVD
+            mean = data.mean(dim=0)
+            centered = data - mean
+            _, singular_values, vh = torch.linalg.svd(centered, full_matrices=False)
+            # eigenvalues from singular values
+            eigenvalues = singular_values.square() / max(centered.shape[0] - 1, 1)
+
+            # vh rows are eigenvectors; pca_transform expects columns-as-eigenvectors
+            eigenvectors = vh.T  # [dim, dim] — columns are eigenvectors
+
+            # Determine bit budget
+            total_bits = int(dim * 16 * bit_budget_ratio)
+            bit_widths = dp_bit_allocation(eigenvalues, bit_budget=total_bits, max_bits=16)
+            bit_budget = int(bit_widths.sum().item())
+
+            # Compute per-component ranges for quantization
+            pca_coeffs = pca_transform(centered, eigenvectors)
+            pca_mins = pca_coeffs.min(dim=0).values
+            pca_maxs = pca_coeffs.max(dim=0).values
+
+            # Build head indices for this group
+            group_start = group_idx * self.head_group_size
+            head_indices = list(range(group_start, group_start + self.head_group_size))
+
+            entries[key] = PCAEntry(
+                eigenvectors=eigenvectors,  # [dim, dim] — columns are eigenvectors
+                eigenvalues=eigenvalues,
+                mean=mean,
+                head_indices=head_indices,
+                kind=kind,
+                bit_budget=bit_budget,
+                pca_mins=pca_mins,
+                pca_maxs=pca_maxs,
+                bit_widths=bit_widths,
+            )
+
+        return CalibrationData(
+            entries=entries,
+            head_group_size=self.head_group_size,
+            rope_theta=self.rope_theta,
+        )
