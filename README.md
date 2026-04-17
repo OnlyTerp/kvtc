@@ -1,12 +1,21 @@
 <div align="center">
 
-# KVTC — KV-Cache Tensor Compression
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/banner.svg">
+  <source media="(prefers-color-scheme: light)" srcset="assets/banner.svg">
+  <img alt="KVTC — KV-Cache Tensor Compression" src="assets/banner.svg" width="100%">
+</picture>
+
+<br>
 
 **The first open-source implementation of NVIDIA's KVTC ([arXiv 2511.01815](https://arxiv.org/abs/2511.01815), ICLR 2026)**
 
-Compress LLM KV caches **6-9x** with negligible quality loss.<br>
-Run **2M+ token context** on a single RTX 5090.
+Compress LLM KV caches **6-9x** with negligible quality loss. Run **2M+ token context** on a single RTX 5090.
 
+<br>
+
+[![Tests](https://github.com/OnlyTerp/kvtc/actions/workflows/test.yml/badge.svg)](https://github.com/OnlyTerp/kvtc/actions/workflows/test.yml)
+[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/OnlyTerp/kvtc/blob/master/notebooks/kvtc_demo.ipynb)
 [![arXiv](https://img.shields.io/badge/arXiv-2511.01815-b31b1b.svg)](https://arxiv.org/abs/2511.01815)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/Python-3.10%2B-blue.svg)](https://www.python.org/downloads/)
@@ -53,30 +62,38 @@ Qwen3.5-27B      1M         ~384 GB            5x H100 80GB
 | TurboQuant turbo2 | **1M** | 67 tok/s | 17 GB | Confirmed |
 | **KVTC K2V4** | **~1.4M** | ~65 tok/s | ~18 GB | Integration in progress |
 | **KVTC K1V3** | **~2.1M** | ~60 tok/s | ~15 GB | Integration in progress |
+
+### Visual Benchmarks
+
+<p align="center">
+  <img src="assets/compression_vs_quality.png" alt="Compression vs Quality" width="48%">
+  <img src="assets/context_window_extension.png" alt="Context Window Extension" width="48%">
+</p>
+<p align="center">
+  <img src="assets/prefill_throughput.png" alt="Prefill Throughput" width="48%">
+  <img src="assets/pipeline_overview.png" alt="Pipeline Overview" width="48%">
+</p>
+
 ---
 
 ## How It Works
 
 KVTC applies **media-compression techniques** (the same ideas behind JPEG and H.264) to KV cache vectors. The pipeline has three stages, each inspired by classical signal processing:
 
-```
-                         KVTC Compression Pipeline
+```mermaid
+graph LR
+    A["KV Cache Tensor<br/><small>FP16, ~16 GB</small>"] --> B["RoPE Undo<br/><small>keys only</small>"]
+    B --> C["PCA Transform<br/><small>decorrelate</small>"]
+    C --> D["DP-Optimal<br/>Quantization<br/><small>0-16 bits/component</small>"]
+    D --> E["Entropy Coding<br/><small>DEFLATE/LZMA</small>"]
+    E --> F["Compressed<br/><small>~2 GB</small>"]
 
-  KV Cache Tensor                                                           Compressed
-  (FP16, ~16 GB)                                                           (~2 GB)
-       |                                                                       ^
-       v                                                                       |
-  +---------+     +--------------+     +-----------------+     +-------------+
-  |  RoPE   |     |     PCA      |     |   DP-Optimal    |     |  Entropy    |
-  |  Undo   |---->|  Transform   |---->|  Quantization   |---->|  Coding     |
-  |(keys)   |     |(decorrelate) |     |(adaptive bits)  |     |(DEFLATE)    |
-  +---------+     +--------------+     +-----------------+     +-------------+
-       |                |                      |                      |
-  Remove RoPE      Project into          DP finds optimal        Lossless
-  rotation to      principal             bits per component:     compression
-  expose low-      components.           high-variance -> more   on quantized
-  rank structure   Orders dims           bits; low-variance      byte stream.
-  in keys.         by variance.          -> 0 bits (pruned).    ~1.3x extra.
+    style A fill:#1a1a2e,stroke:#58a6ff,color:#e6edf3
+    style B fill:#1a1a2e,stroke:#58a6ff,color:#e6edf3
+    style C fill:#1a1a2e,stroke:#58a6ff,color:#e6edf3
+    style D fill:#1a1a2e,stroke:#58a6ff,color:#e6edf3
+    style E fill:#1a1a2e,stroke:#58a6ff,color:#e6edf3
+    style F fill:#1a1a2e,stroke:#3fb950,color:#3fb950
 ```
 
 ### Stage 1 — PCA Feature Decorrelation
@@ -110,6 +127,19 @@ After quantization, many components share the same few values. **DEFLATE** (zlib
 | **RoPE undo/reapply** | Remove positional rotation before PCA | Exposes low-rank structure; reapply is exact |
 | **Attention sink protection** | First 4 tokens kept in FP16 | These receive disproportionate attention regardless of content |
 | **Sliding window protection** | Last 128 tokens kept in FP16 | Recent context is critical; compressing it adds latency for no gain |
+---
+
+## Interactive Demo
+
+Try KVTC in your browser — no install required:
+
+[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/OnlyTerp/kvtc/blob/master/notebooks/kvtc_demo.ipynb)
+
+The notebook walks through all three pipeline stages with visualizations:
+- **PCA eigenvalue spectrum** — see which components carry the most information
+- **DP bit allocation** — watch the optimizer distribute bits across components  
+- **Quality vs compression curve** — measure reconstruction quality at different budgets
+
 ---
 
 ## Quick Start
@@ -230,26 +260,26 @@ KV cache compression has become one of the hottest areas in LLM inference. Here'
 
 KV cache compression methods optimize different trade-offs:
 
+```mermaid
+quadrantChart
+    title Quality vs Compression Ratio
+    x-axis Low Compression --> High Compression
+    y-axis Low Quality --> High Quality
+    quadrant-1 Sweet spot
+    quadrant-2 Overkill
+    quadrant-3 Avoid
+    quadrant-4 Aggressive
+    KVTC K4V6: [0.20, 0.95]
+    KVTC K2V4: [0.40, 0.88]
+    TurboQuant turbo4: [0.30, 0.82]
+    TurboQuant turbo3: [0.38, 0.72]
+    KVTC K1V3: [0.55, 0.68]
+    TriAttention: [0.65, 0.75]
+    NexusQuant balanced: [0.70, 0.55]
+    NexusQuant max: [0.95, 0.30]
 ```
-                        Quality Preservation
-                              ^
-                              |
-                  KVTC K4V6  -+--- Near-lossless
-                              |
-         TurboQuant turbo4   -+
-                  KVTC K2V4  -+--- Excellent
-                              |
-          TriAttention 10x   -+
-         TurboQuant turbo3   -+--- Good
-                  KVTC K1V3  -+
-                              |
-       NexusQuant balanced   -+--- Acceptable
-                              |
-         NexusQuant max 33x  -+--- Degraded
-                              |
-              ----------------+-+-----------------> Compression Ratio
-                            2x 4x  6x  8x  10x    20x     33x
-```
+
+> See [assets/compression_vs_quality.png](assets/compression_vs_quality.png) for a detailed scatter plot with all methods.
 
 ### KVTC vs TurboQuant — The Two ICLR 2026 Papers
 
@@ -334,49 +364,51 @@ kvtc/
 
 ### Compression Pipeline (Detailed)
 
-```
-Input: KV cache tensor [num_layers x num_heads x seq_len x head_dim] in FP16
+```mermaid
+flowchart TB
+    Input["Input: KV cache tensor<br/>[layers x heads x seq_len x head_dim] FP16"]
+    
+    subgraph protect["1. Token Protection"]
+        P1["First 4 tokens → sink buffer (FP16)"]
+        P2["Last 128 tokens → window buffer (FP16)"]
+        P3["Middle tokens → compression pipeline"]
+    end
+    
+    subgraph rope["2. RoPE Undo (keys only)"]
+        R1["key_vectors = undo_rope(keys, positions, theta)<br/><i>Removes positional rotation — inverse is exact</i>"]
+    end
+    
+    subgraph pca["3. PCA Transform"]
+        PC1["centered = vectors - mean<br/>pca_coeffs = centered @ eigenvectors<br/><i>Top components capture most variance</i>"]
+    end
+    
+    subgraph dp["4. DP-Optimal Bit Allocation"]
+        D1["bit_widths = dp_allocate(eigenvalues, budget)<br/><i>0-16 bits per component, minimizes MSE</i>"]
+    end
+    
+    subgraph quant["5. Quantize"]
+        Q1["indices[i] = uniform_quantize(pca_coeffs[i], b_i)<br/><i>Components with b_i = 0 are pruned</i>"]
+    end
+    
+    subgraph entropy["6. Entropy Coding"]
+        E1["compressed = best_of(zlib, lzma, rans).compress(bits)<br/><i>Triple-mode picker selects smallest output</i>"]
+    end
+    
+    Output["Output: Compressed byte stream + metadata"]
 
-For each (layer, head_group):
-    +--------------------------------------------------------------+
-    | 1. TOKEN PROTECTION                                          |
-    |    +-- First 4 tokens -> sink buffer (FP16, never touched)   |
-    |    +-- Last 128 tokens -> window buffer (FP16)               |
-    |    +-- Middle tokens -> compression pipeline                 |
-    +--------------------------------------------------------------+
-    | 2. ROPE UNDO (keys only)                                     |
-    |    key_vectors = undo_rope(keys, positions, rope_theta)      |
-    |    (Removes positional rotation to expose low-rank           |
-    |     structure. Inverse is exact: rotate by -theta)           |
-    +--------------------------------------------------------------+
-    | 3. PCA TRANSFORM                                             |
-    |    centered = vectors - mean                                 |
-    |    pca_coeffs = centered @ eigenvectors                      |
-    |    (Projects into decorrelated space. Eigenvectors from      |
-    |     calibration. Top components capture most variance.)      |
-    +--------------------------------------------------------------+
-    | 4. DP-OPTIMAL BIT ALLOCATION                                 |
-    |    bit_widths = dp_allocate(eigenvalues, budget)             |
-    |    (Assigns 0-16 bits per component. Minimizes total         |
-    |     MSE under budget constraint.)                            |
-    +--------------------------------------------------------------+
-    | 5. QUANTIZE                                                  |
-    |    For each component i with b_i > 0:                        |
-    |      indices[i] = uniform_quantize(pca_coeffs[i], b_i)      |
-    |    Components with b_i = 0 are pruned (not stored).          |
-    +--------------------------------------------------------------+
-    | 6. ENTROPY CODING                                            |
-    |    compressed = best_of(zlib, lzma, rans).compress(bits)     |
-    |    (Dual/triple-mode picker selects smallest output.)        |
-    +--------------------------------------------------------------+
+    Input --> protect --> rope --> pca --> dp --> quant --> entropy --> Output
 
-Output: Compressed byte stream + metadata (scales, zero_points, bit_widths)
+    style Input fill:#1a1a2e,stroke:#58a6ff,color:#e6edf3
+    style Output fill:#1a1a2e,stroke:#3fb950,color:#3fb950
 ```
 
 ### Decompression (Reverse Pipeline)
 
-```
-Compressed -> Entropy decode -> Dequantize -> PCA inverse -> RoPE reapply -> FP16 KV cache
+```mermaid
+graph LR
+    A["Compressed"] --> B["Entropy Decode"] --> C["Dequantize"] --> D["PCA Inverse"] --> E["RoPE Reapply"] --> F["FP16 KV Cache"]
+    style A fill:#1a1a2e,stroke:#3fb950,color:#3fb950
+    style F fill:#1a1a2e,stroke:#58a6ff,color:#e6edf3
 ```
 
 The decompression path is the critical path for inference. For serving, entropy coding is skipped (too slow per-attention-op), and PCA-quantized indices are stored directly for on-the-fly reconstruction.
