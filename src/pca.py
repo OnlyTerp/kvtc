@@ -111,7 +111,12 @@ def apply_rope(
     
     Returns:
         Tensor with RoPE applied
+    
+    Raises:
+        ValueError: If head_dim is odd (RoPE requires even dimensions).
     """
+    if head_dim % 2 != 0:
+        raise ValueError(f"head_dim must be even for RoPE, got {head_dim}")
     cos, sin = _rotary_embedding(positions, head_dim, rope_theta)
     cos = cos.to(x.dtype).to(x.device)
     sin = sin.to(x.dtype).to(x.device)
@@ -243,8 +248,20 @@ class PCACalibrator:
             # eigenvalues from singular values
             eigenvalues = singular_values.square() / max(centered.shape[0] - 1, 1)
 
-            # vh rows are eigenvectors; pca_transform expects columns-as-eigenvectors
-            eigenvectors = vh.T  # [dim, dim] — columns are eigenvectors
+            # vh has shape [k, dim] where k = min(num_rows, dim).
+            # When k < dim, pad with zero-eigenvalue directions to get [dim, dim].
+            k = vh.shape[0]
+            if k < dim:
+                pad = torch.zeros(dim - k, dim, dtype=vh.dtype, device=vh.device)
+                vh_full = torch.cat([vh, pad], dim=0)
+                eigenvalues = torch.cat(
+                    [eigenvalues, torch.zeros(dim - k, dtype=eigenvalues.dtype, device=eigenvalues.device)]
+                )
+            else:
+                vh_full = vh
+
+            # eigenvectors: [dim, dim] — rows are eigenvectors (same convention as SVD vh)
+            eigenvectors = vh_full
 
             # Determine bit budget
             total_bits = int(dim * 16 * bit_budget_ratio)
@@ -261,7 +278,7 @@ class PCACalibrator:
             head_indices = list(range(group_start, group_start + self.head_group_size))
 
             entries[key] = PCAEntry(
-                eigenvectors=eigenvectors,  # [dim, dim] — columns are eigenvectors
+                eigenvectors=eigenvectors,  # [dim, dim] — rows are eigenvectors
                 eigenvalues=eigenvalues,
                 mean=mean,
                 head_indices=head_indices,
